@@ -1,5 +1,12 @@
+from .telegram_notifier import send_channel_alert
+import os, time, psutil
+from django.http import JsonResponse
+from datetime import datetime
 from django.http import HttpResponse
 import time
+import subprocess, json, time, os, glob, psutil
+
+
 def fast_view(request):
     return HttpResponse("Fast OK")
 
@@ -15,6 +22,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 
+
 def custom_login(request):
     if request.method == 'POST':
         username = request.POST.get('username')
@@ -23,61 +31,38 @@ def custom_login(request):
         user = authenticate(request, username=username, password=password)
         if user is not None:
             login(request, user)
-            return redirect('dashboard')  # Redirect to dashboard after successful login
+            return redirect('dashboard')
         else:
             messages.error(request, 'Invalid username or password.')
-    
+
     return render(request, 'transcoder/login.html')
+
 
 @login_required
 def custom_logout(request):
     logout(request)
-    return redirect('login')  # Redirect to login after logout
+    return redirect('login')
+
 
 from django.http import JsonResponse
 import psutil
 from django.http import JsonResponse
 from .models import Stream
 import psutil
-'''
-def get_stream_status(request):
-    streams = Stream.objects.all()
-    status = {}
-
-    for stream in streams:
-        found = False
-        for p in psutil.process_iter(['pid', 'cmdline']):
-            try:
-                cmd = p.info['cmdline']
-                if cmd and stream.name in ' '.join(cmd):
-                    found = True
-                    break
-            except (psutil.ZombieProcess, psutil.AccessDenied, psutil.NoSuchProcess):
-                continue
-
-        status[stream.id] = found
-
-        # Optional DB update
-        if stream.is_running != found:
-            stream.is_running = found
-            stream.save(update_fields=["is_running"])
-
-    return JsonResponse(status)
-
-'''
 
 from django.http import JsonResponse
 
+
 @login_required
 def get_stream_status_view(request):
-    status = get_stream_status()  # Call your existing function
+    status = get_stream_status()
     return JsonResponse(status)
+
 
 def get_stream_status():
     streams = Stream.objects.all()
     status = {}
-    
-    # Build list of all current cmdlines only once
+
     all_cmds = []
     for p in psutil.process_iter(['pid', 'cmdline']):
         try:
@@ -96,7 +81,6 @@ def get_stream_status():
             stream.is_running = found
             streams_to_update.append(stream)
 
-    # Bulk update
     if streams_to_update:
         Stream.objects.bulk_update(streams_to_update, ['is_running'])
 
@@ -106,13 +90,14 @@ def get_stream_status():
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 from .models import Stream
-import psutil, GPUtil, shutil, subprocess
+import psutil, shutil, subprocess
 import pynvml
+
 
 @login_required
 def dashboard(request):
     start = time.time()
-    status=get_stream_status()
+    status = get_stream_status()
     total = Stream.objects.count()
     running = Stream.objects.filter(is_running=True).count()
     stopped = total - running
@@ -128,7 +113,7 @@ def dashboard(request):
         gpu_info = []
         for i in range(gpu_count):
             handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            name = pynvml.nvmlDeviceGetName(handle)  # FIXED: removed decode
+            name = pynvml.nvmlDeviceGetName(handle)
             if isinstance(name, bytes):
                 name = name.decode("utf-8")
             mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
@@ -151,7 +136,6 @@ def dashboard(request):
         print("GPU stats error:", e)
         gpu_info = []
 
-    # Channel list & status
     labels = list(Stream.objects.values_list('name', flat=True))
     data = [1 if s.is_running else 0 for s in Stream.objects.all()]
     print(f"Query took {time.time() - start:.2f} seconds")
@@ -169,6 +153,19 @@ def dashboard(request):
     }
 
     return render(request, 'transcoder/dashboard.html', context)
+
+
+def update_stream_statuses():
+    process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline']) if p.info['cmdline']]
+
+    for stream in Stream.objects.all():
+        is_running_now = any(stream.name in cmd for cmd in process_cmds)
+        if stream.is_running != is_running_now:
+            stream.is_running = is_running_now
+            stream.save(update_fields=['is_running'])
+
+            if not is_running_now:
+                send_channel_alert(stream.name, 'stopped')
 
 
 @login_required
@@ -190,7 +187,9 @@ def dashboard_data(request):
         gpu_info = []
         for i in range(gpu_count):
             handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            name = pynvml.nvmlDeviceGetName(handle).decode('utf-8')
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode('utf-8')
             mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
             util = pynvml.nvmlDeviceGetUtilizationRates(handle)
             enc_util = pynvml.nvmlDeviceGetEncoderUtilization(handle)
@@ -216,25 +215,12 @@ def dashboard_data(request):
         'gpu_info': gpu_info
     })
 
-import psutil
-from .models import Stream
-
-def update_stream_statuses():
-    # Get all current running process command lines
-    #process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline'])]
-    process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline']) if p.info['cmdline']]
-
-    for stream in Stream.objects.all():
-        is_running_now = any(stream.name in cmd for cmd in process_cmds)
-        if stream.is_running != is_running_now:
-            stream.is_running = is_running_now
-            stream.save(update_fields=['is_running'])
-
 
 from django.shortcuts import render
 from .models import Stream
 import subprocess
 from django.db.models import F
+
 
 @login_required
 def channel_list(request):
@@ -247,6 +233,7 @@ def channel_list(request):
         'hls_channels': hls_channels,
         'mpd_channels': mpd_channels
     })
+
 
 import os
 import stat
@@ -296,7 +283,6 @@ start_hls_cpu_script = """    #!/bin/sh
       exit 1
    fi
    """
-
 
 start_udp_script = """
 
@@ -356,7 +342,6 @@ FF =`ps ax | grep ffmpeg - i | grep [input-stream]`
     fi
 """
 
-
 start_hls_script = """    #!/bin/sh
 
    # Input file
@@ -399,7 +384,6 @@ start_hls_script = """    #!/bin/sh
       exit 1
    fi
    """
-
 
 start_mpd_script = """    #!/bin/sh
 
@@ -444,26 +428,24 @@ start_mpd_script = """    #!/bin/sh
    fi
    """
 
+
 def generate_script(payload):
     print("Generating script now...")
     output_stream = payload['output_stream']
     stream_name = payload['name']
-    
+
     stream_type = payload['stream_type'].lower()
     if stream_type == 'h265':
-        stream_type = 'hevc' 
+        stream_type = 'hevc'
     output_codec = payload['output_codec'].lower()
     if output_codec == 'h265':
         output_codec = 'hevc'
 
-    # script path define
     script_dir = "/opt/stream/"
 
-    # HLS ka file name normal
     if output_stream == "HLS":
         script_name = f"{stream_name}.sh"
     elif output_stream == "MPD":
-    # If already has _MPD, don't add it again
         if not stream_name.endswith("_MPD"):
             stream_name = f"{stream_name}_MPD"
         script_name = f"{stream_name}.sh"
@@ -474,9 +456,9 @@ def generate_script(payload):
     force_cpu = str(payload.get('force_cpu', '')).lower() == 'true'
     gpu_value = str(payload.get('gpu', '')).strip().lower()
     is_cpu_transcode = force_cpu or gpu_value in ['', 'none', 'null']
+
     if output_stream == "HLS":
         script_template = start_hls_cpu_script if is_cpu_transcode else start_hls_script
-    # Select correct base script template
     elif output_stream == "UDP":
         script_template = start_udp_script
     elif output_stream == "RTP":
@@ -493,7 +475,6 @@ def generate_script(payload):
     else:
         script_template = start_hls_script
 
-    # Replace all placeholders
     keys_to_replace = {
         '[STREAMNAME]': stream_name,
         '[STREAMTYPE]': stream_type,
@@ -516,14 +497,29 @@ def generate_script(payload):
     for key, value in keys_to_replace.items():
         script_template = script_template.replace(key, str(value if value is not None else ''))
 
-    # Write to file
+    # Write .sh file
     with open(script_path, 'w') as f:
         f.write(script_template)
 
-    # Make it executable
     os.chmod(script_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
 
-    return script_path
+    # ── SHC Encryption ──────────────────────────────────────────
+    binary_path = script_path.replace('.sh', '')
+    try:
+        # Encrypt .sh → binary
+        subprocess.run(['sudo', 'shc', '-f', script_path, '-o', binary_path], check=True)
+        # Execute permission
+        subprocess.run(['sudo', 'chmod', '+x', binary_path], check=True)
+        # Remove original .sh
+        subprocess.run(['sudo', 'rm', '-f', script_path], check=True)
+        # Remove temp .c file
+        subprocess.run(['sudo', 'rm', '-f', f'{script_path}.x.c'], check=True)
+        print(f"Encrypted successfully: {binary_path}")
+        return binary_path
+    except subprocess.CalledProcessError as e:
+        print(f"SHC encryption failed: {e} — falling back to .sh")
+        return script_path
+    # ────────────────────────────────────────────────────────────
 
 
 def add_stream(request):
@@ -539,10 +535,9 @@ def add_stream(request):
             stream_obj.save()
             payload['name'] = stream_obj.name
             payload['stream_type'] = stream_obj.stream_type
-            # generate script
+
             script_path = generate_script(payload)
 
-            # run the script
             try:
                 subprocess.run(script_path, shell=True, check=True)
             except subprocess.CalledProcessError as e:
@@ -557,8 +552,7 @@ def add_stream(request):
     else:
         form = StreamForm()
 
-    return render(request, 'transcoder/add_stream.html', {'form': form,'errors': form.errors})
-
+    return render(request, 'transcoder/add_stream.html', {'form': form, 'errors': form.errors})
 
 
 @login_required
@@ -571,44 +565,26 @@ def edit_stream(request, pk):
             updated_stream = form.save(commit=False)
             payload = form.cleaned_data
 
-            # If MPD stream — append _MPD once
             if payload['output_stream'] == "MPD" and not updated_stream.name.endswith("_MPD"):
                 updated_stream.name = f"{updated_stream.name}_MPD"
 
-            # Update stream_type if needed
             if payload['stream_type'] == 'h265':
                 updated_stream.stream_type = 'hevc'
 
             updated_stream.save()
 
-            # Update payload for script generation
             payload['name'] = updated_stream.name
             payload['stream_type'] = updated_stream.stream_type
 
-            # generate new script with updated details
             script_path = generate_script(payload)
             os.chmod(script_path, 0o755)
-            '''
-            # run the updated stream script
+
             try:
-                result = subprocess.run(
-                    f"bash {script_path}",
-                    shell=True,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-            except subprocess.CalledProcessError as e:
-                print("Stream start failed:", e.stderr)
-                return HttpResponse(f"Stream failed:<br><pre>{e.stderr}</pre>")
-            '''
-            try:
-                # run the updated stream script in background
-                subprocess.Popen(f"bash {script_path} > /dev/null 2>&1 &",shell=True)
+                subprocess.Popen(f"{script_path} > /dev/null 2>&1 &", shell=True)
             except Exception as e:
                 print("Stream start failed:", str(e))
                 return HttpResponse(f"Stream failed:<br><pre>{e}</pre>")
+
             messages.success(request, 'Stream Updated & Started Successfully!')
             return redirect('channel_list')
         else:
@@ -619,21 +595,28 @@ def edit_stream(request, pk):
     return render(request, 'transcoder/add_stream.html', {'form': form, 'stream': stream_obj})
 
 
-
 from django.shortcuts import get_object_or_404, redirect
 from django.contrib import messages
 import subprocess
 import os
 
+
 def play_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
     if not stream.is_running:
-        script_path = f"/opt/stream/{stream.name}.sh"
-        subprocess.run(f"bash {script_path}", shell=True)
+        binary_path = f"/opt/stream/{stream.name}"
+        sh_path = f"/opt/stream/{stream.name}.sh"
+
+        if os.path.exists(binary_path) and os.access(binary_path, os.X_OK):
+            subprocess.run(binary_path, shell=True)
+        elif os.path.exists(sh_path):
+            subprocess.run(f"bash {sh_path}", shell=True)
+
         stream.is_running = True
         stream.save()
         messages.success(request, f"Stream '{stream.name}' started.")
     return redirect('channel_list')
+
 
 def stop_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
@@ -641,14 +624,11 @@ def stop_stream(request, id):
         try:
             print(f"Stopping stream: {stream.name}")
 
-            # Check if process exists
             subprocess.run(f"pgrep -f '{stream.name}'", shell=True, check=True)
 
-            # Kill the process
             subprocess.run(f"pkill -f '/opt/stream/{stream.name}.sh'", shell=True)
             subprocess.run(f"sudo /usr/bin/pkill -f '{stream.name}'", shell=True)
 
-            # Update status
             stream.is_running = False
             stream.save()
             messages.success(request, f"Stream '{stream.name}' stopped.")
@@ -660,28 +640,24 @@ def stop_stream(request, id):
             messages.error(request, f"Failed to stop stream '{stream.name}'.")
     else:
         messages.info(request, f"Stream '{stream.name}' is already stopped.")
-    
+
     return redirect('channel_list')
-'''
-def delete_stream(request, id):
-    stream = get_object_or_404(Stream, id=id)
-    subprocess.run(f"rm -f /opt/stream/{stream.name}.sh", shell=True)
-    stream.delete()
-    messages.success(request, "Stream deleted.")
-    return redirect('channel_list')
-'''
+
 
 def delete_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
 
     try:
-        # Kill the process if running
+        # Kill the process
         subprocess.run(f"sudo /usr/bin/pkill -f '{stream.name}'", shell=True)
 
-        # Delete the stream script file
+        # Delete binary (encrypted)
+        subprocess.run(f"rm -f /opt/stream/{stream.name}", shell=True)
+
+        # Delete .sh if exists (fallback)
         subprocess.run(f"rm -f /opt/stream/{stream.name}.sh", shell=True)
 
-        # Delete the DB entry
+        # Delete DB entry
         stream.delete()
 
         messages.success(request, f"Stream '{stream.name}' stopped and deleted successfully.")
@@ -692,3 +668,95 @@ def delete_stream(request, id):
 
     return redirect('channel_list')
 
+
+import os, time, glob, psutil
+from django.http import JsonResponse
+
+LAST_UDP_BYTES = {}
+LAST_READ_TIME = {}
+
+
+def get_bandwidth_data(request):
+    global LAST_UDP_BYTES, LAST_READ_TIME
+
+    now = time.time()
+
+    response = {
+        "channels": [],
+        "total_input": 0,
+        "total_output": 0
+    }
+
+    live_path = "/var/www/html/live/*.ts"
+    all_files = glob.glob(live_path)
+
+    udp_ports = set()
+    try:
+        import subprocess
+        ss_output = subprocess.check_output("ss -un", shell=True).decode()
+        for line in ss_output.split("\n"):
+            if "udp" in line and ":" in line:
+                udp_ports.add(line.strip())
+    except:
+        pass
+
+    for stream in Stream.objects.all():
+        ch = stream.name
+        udp_url = stream.source
+
+        last_time = LAST_READ_TIME.get(ch, now)
+        dt = max(now - last_time, 1)
+
+        input_mbps = 0
+        try:
+            bytes_in = 0
+            ip_port = udp_url.replace("udp://", "")
+
+            if ip_port in str(udp_ports):
+                for p in psutil.process_iter(['pid', 'cmdline']):
+                    try:
+                        cmd = " ".join(p.info['cmdline']) if p.info['cmdline'] else ""
+                        if udp_url in cmd:
+                            io = psutil.Process(p.pid).io_counters()
+                            bytes_in += io.read_bytes
+                    except:
+                        pass
+
+            last_bytes = LAST_UDP_BYTES.get(ch, bytes_in)
+            input_mbps = max(0, (bytes_in - last_bytes) * 8 / dt / 1e6)
+
+            LAST_UDP_BYTES[ch] = bytes_in
+
+        except:
+            input_mbps = 0
+
+        output_mbps = 0
+        try:
+            ch_files = [f for f in all_files if os.path.basename(f).startswith(ch)]
+            ch_files = sorted(ch_files, key=os.path.getmtime)[-3:]
+
+            if len(ch_files) >= 2:
+                total_bytes = sum(os.path.getsize(f) for f in ch_files)
+                t1 = os.path.getmtime(ch_files[0])
+                t2 = os.path.getmtime(ch_files[-1])
+                dt_seg = max(t2 - t1, 1)
+                output_mbps = (total_bytes * 8 / dt_seg) / 1e6
+            elif ch_files:
+                size = os.path.getsize(ch_files[-1])
+                output_mbps = (size * 2 * 8 / 4) / 1e6
+
+        except:
+            output_mbps = 0
+
+        LAST_READ_TIME[ch] = now
+
+        response["total_input"] += input_mbps
+        response["total_output"] += output_mbps
+
+        response["channels"].append({
+            "name": ch,
+            "input": round(input_mbps, 2),
+            "output": round(output_mbps, 2)
+        })
+
+    return JsonResponse(response)
