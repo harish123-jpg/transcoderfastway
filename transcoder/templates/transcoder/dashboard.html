@@ -1,0 +1,150 @@
+{% extends 'transcoder/base.html' %}
+{% block content %}
+
+<h2 class="text-3xl font-bold text-white-800 mb-6">📊 Dashboard</h2>
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-blue-600 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">Total Channels</h4>
+    <p class="text-3xl mt-2">{{ total }}</p>
+  </div>
+  <div class="bg-green-600 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">Running</h4>
+    <p class="text-3xl mt-2">{{ running }}</p>
+  </div>
+  <div class="bg-red-600 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">Stopped</h4>
+    <p class="text-3xl mt-2">{{ stopped }}</p>
+  </div>
+  <div class="bg-indigo-600 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">CPU / RAM</h4>
+    <p class="text-2xl mt-2">{{ cpu }}% / {{ memory }}%</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+  <div class="bg-gray-800 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">Disk Usage</h4>
+    <p class="text-3xl mt-2">{{ disk }}%</p>
+  </div>
+  <div class="bg-gray-800 text-white p-6 rounded-xl shadow-lg">
+    <h4 class="text-lg font-semibold">Load Avg</h4>
+    <p class="text-2xl mt-2">{{ load_avg.0 }}, {{ load_avg.1 }}, {{ load_avg.2 }}</p>
+  </div>
+</div>
+
+{% if gpu_info %}
+<h3 class="text-2xl font-semibold text-white-700 mb-4">🖥️ GPU Details</h3>
+<div class="overflow-x-auto rounded-lg shadow-lg mb-6">
+  <table class="min-w-full text-left text-sm text-gray-300 bg-gray-900 rounded-xl">
+    <thead class="text-gray-400 uppercase bg-gray-800">
+      <tr>
+        <th class="px-6 py-3">GPU</th>
+        <th class="px-6 py-3">Load (%)</th>
+        <th class="px-6 py-3">Encoder (%)</th>
+        <th class="px-6 py-3">Decoder (%)</th>
+        <th class="px-6 py-3">Memory (MB)</th>
+        <th class="px-6 py-3">Temp</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for gpu in gpu_info %}
+      <tr class="border-b border-gray-700 hover:bg-gray-800">
+        <td class="px-6 py-3">{{ gpu.name }}</td>
+        <td class="px-6 py-3">{{ gpu.load }}</td>
+        <td class="px-6 py-3">{{ gpu.encoder_usage }}</td>
+        <td class="px-6 py-3">{{ gpu.decoder_usage }}</td>
+        <td class="px-6 py-3">{{ gpu.memory_used }} / {{ gpu.memory_total }}</td>
+        <td class="px-6 py-3">{{ gpu.temperature }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h3 class="text-2xl font-semibold text-white-700 mb-4">📊 Stream Status</h3>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-gray-800 p-4 rounded-xl text-center text-gray-300">
+    <canvas id="cpuChart"></canvas>
+    <p class="mt-2">CPU</p>
+  </div>
+  <div class="bg-gray-800 p-4 rounded-xl text-center text-gray-300">
+    <canvas id="ramChart"></canvas>
+    <p class="mt-2">RAM</p>
+  </div>
+  <div class="bg-gray-800 p-4 rounded-xl text-center text-gray-300">
+    <canvas id="diskChart"></canvas>
+    <p class="mt-2">Disk</p>
+  </div>
+  <div class="bg-gray-800 p-4 rounded-xl text-center text-gray-300">
+    <canvas id="channelsChart"></canvas>
+    <p class="mt-2">Channels</p>
+  </div>
+</div>
+
+<div id="gpuSection" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let cpuChart, ramChart, diskChart, channelsChart;
+
+function createDonutChart(ctx, used) {
+  return new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Used', 'Free'],
+      datasets: [{
+        data: [used, 100-used],
+        backgroundColor: ['#4ade80', '#1e293b'],
+        borderWidth: 0
+      }]
+    },
+    options: { cutout: '70%', plugins: { legend: { display: false } } }
+  });
+}
+
+function createChannelsChart(running, stopped) {
+  return new Chart(document.getElementById('channelsChart'), {
+    type: 'pie',
+    data: {
+      labels: ['Running', 'Stopped'],
+      datasets: [{
+        data: [running, stopped],
+        backgroundColor: ['#3b82f6', '#ef4444'],
+      }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+function updateCharts(data) {
+  cpuChart.data.datasets[0].data = [data.cpu, 100-data.cpu];
+  ramChart.data.datasets[0].data = [data.memory, 100-data.memory];
+  diskChart.data.datasets[0].data = [data.disk, 100-data.disk];
+  channelsChart.data.datasets[0].data = [data.running, data.stopped];
+
+  cpuChart.update();
+  ramChart.update();
+  diskChart.update();
+  channelsChart.update();
+
+}
+
+function fetchAndUpdate() {
+  fetch('/dashboard-data/')
+    .then(r => r.json())
+    .then(data => updateCharts(data));
+}
+
+cpuChart = createDonutChart(document.getElementById('cpuChart'), 0);
+ramChart = createDonutChart(document.getElementById('ramChart'), 0);
+diskChart = createDonutChart(document.getElementById('diskChart'), 0);
+channelsChart = createChannelsChart(0, 0);
+
+fetchAndUpdate();
+setInterval(fetchAndUpdate, 300);
+</script>
+
+{% endblock %}
+
