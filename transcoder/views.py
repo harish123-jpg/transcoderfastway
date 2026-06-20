@@ -1,10 +1,5 @@
-from .telegram_notifier import send_channel_alert
-import os, time, psutil
-from django.http import JsonResponse
-from datetime import datetime
 from django.http import HttpResponse
 import time
-import subprocess, json, time, os, glob, psutil
 
 
 def fast_view(request):
@@ -34,7 +29,7 @@ def custom_login(request):
             return redirect('dashboard')  # Redirect to dashboard after successful login
         else:
             messages.error(request, 'Invalid username or password.')
-    
+
     return render(request, 'transcoder/login.html')
 
 
@@ -43,11 +38,13 @@ def custom_logout(request):
     logout(request)
     return redirect('login')  # Redirect to login after logout
 
+
 from django.http import JsonResponse
 import psutil
 from django.http import JsonResponse
 from .models import Stream
 import psutil
+
 '''
 def get_stream_status(request):
     streams = Stream.objects.all()
@@ -77,15 +74,17 @@ def get_stream_status(request):
 
 from django.http import JsonResponse
 
+
 @login_required
 def get_stream_status_view(request):
     status = get_stream_status()  # Call your existing function
     return JsonResponse(status)
 
+
 def get_stream_status():
     streams = Stream.objects.all()
     status = {}
-    
+
     # Build list of all current cmdlines only once
     all_cmds = []
     for p in psutil.process_iter(['pid', 'cmdline']):
@@ -122,7 +121,7 @@ import pynvml
 @login_required
 def dashboard(request):
     start = time.time()
-    status=get_stream_status()
+    status = get_stream_status()
     total = Stream.objects.count()
     running = Stream.objects.filter(is_running=True).count()
     stopped = total - running
@@ -226,12 +225,14 @@ def dashboard_data(request):
         'gpu_info': gpu_info
     })
 
+
 import psutil
 from .models import Stream
 
+
 def update_stream_statuses():
     # Get all current running process command lines
-    #process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline'])]
+    # process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline'])]
     process_cmds = [' '.join(p.info['cmdline']) for p in psutil.process_iter(['cmdline']) if p.info['cmdline']]
 
     for stream in Stream.objects.all():
@@ -246,6 +247,7 @@ from .models import Stream
 import subprocess
 from django.db.models import F
 
+
 @login_required
 def channel_list(request):
     update_stream_statuses()
@@ -257,6 +259,7 @@ def channel_list(request):
         'hls_channels': hls_channels,
         'mpd_channels': mpd_channels
     })
+
 
 import os
 import stat
@@ -306,7 +309,6 @@ start_hls_cpu_script = """    #!/bin/sh
       exit 1
    fi
    """
-
 
 start_udp_script = """
 
@@ -366,7 +368,6 @@ FF =`ps ax | grep ffmpeg - i | grep [input-stream]`
     fi
 """
 
-
 start_hls_script = """    #!/bin/sh
 
    # Input file
@@ -409,7 +410,6 @@ start_hls_script = """    #!/bin/sh
       exit 1
    fi
    """
-
 
 start_mpd_script = """    #!/bin/sh
 
@@ -454,14 +454,15 @@ start_mpd_script = """    #!/bin/sh
    fi
    """
 
+
 def generate_script(payload):
     print("Generating script now...")
     output_stream = payload['output_stream']
     stream_name = payload['name']
-    
+
     stream_type = payload['stream_type'].lower()
     if stream_type == 'h265':
-        stream_type = 'hevc' 
+        stream_type = 'hevc'
     output_codec = payload['output_codec'].lower()
     if output_codec == 'h265':
         output_codec = 'hevc'
@@ -473,7 +474,7 @@ def generate_script(payload):
     if output_stream == "HLS":
         script_name = f"{stream_name}.sh"
     elif output_stream == "MPD":
-    # If already has _MPD, don't add it again
+        # If already has _MPD, don't add it again
         if not stream_name.endswith("_MPD"):
             stream_name = f"{stream_name}_MPD"
         script_name = f"{stream_name}.sh"
@@ -567,8 +568,7 @@ def add_stream(request):
     else:
         form = StreamForm()
 
-    return render(request, 'transcoder/add_stream.html', {'form': form,'errors': form.errors})
-
+    return render(request, 'transcoder/add_stream.html', {'form': form, 'errors': form.errors})
 
 
 @login_required
@@ -615,7 +615,7 @@ def edit_stream(request, pk):
             '''
             try:
                 # run the updated stream script in background
-                subprocess.Popen(f"bash {script_path} > /dev/null 2>&1 &",shell=True)
+                subprocess.Popen(f"bash {script_path} > /dev/null 2>&1 &", shell=True)
             except Exception as e:
                 print("Stream start failed:", str(e))
                 return HttpResponse(f"Stream failed:<br><pre>{e}</pre>")
@@ -629,11 +629,11 @@ def edit_stream(request, pk):
     return render(request, 'transcoder/add_stream.html', {'form': form, 'stream': stream_obj})
 
 
-
 from django.shortcuts import get_object_or_404, redirect
 from django.contrib import messages
 import subprocess
 import os
+
 
 def play_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
@@ -644,6 +644,7 @@ def play_stream(request, id):
         stream.save()
         messages.success(request, f"Stream '{stream.name}' started.")
     return redirect('channel_list')
+
 
 def stop_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
@@ -670,8 +671,10 @@ def stop_stream(request, id):
             messages.error(request, f"Failed to stop stream '{stream.name}'.")
     else:
         messages.info(request, f"Stream '{stream.name}' is already stopped.")
-    
+
     return redirect('channel_list')
+
+
 '''
 def delete_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
@@ -680,6 +683,7 @@ def delete_stream(request, id):
     messages.success(request, "Stream deleted.")
     return redirect('channel_list')
 '''
+
 
 def delete_stream(request, id):
     stream = get_object_or_404(Stream, id=id)
@@ -701,4 +705,3 @@ def delete_stream(request, id):
         messages.error(request, f"Failed to delete stream '{stream.name}'.")
 
     return redirect('channel_list')
-
